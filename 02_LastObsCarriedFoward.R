@@ -13,43 +13,8 @@ library(tidyr)
 library(lubridate)
 library(data.table)
 library(zoo)
-
-
 d$Date <- as.Date(d$Date)
 d <- d %>% mutate(Date_month = floor_date(Date, "month"))
-
-# colnames(foo)
-# [1] "Date_month"              "ID"                      "Date"                    "dTime"                  
-# [5] "crack_size"              "crack_class"             "crack_class_description" "in_straight"            
-# [9] "in_transition_curve"     "in_curve"                "covariates_complete"     "rail_age"               
-# [13] "R200"                    "R260"                    "R350HT"                  "grinding"               
-# [17] "milling"                 "planing"                 "rail_1m_weight"          "traffic_direction"      
-# [21] "Curve"                   "Overheight"              "MGT_min"                 "MGT_max"                
-# [25] "EMGT_min"                "EMGT_max"                "Line_speed"              "Turnout_indicator"      
-# [29] "wear_h_mu"               "wear_h_sigma"            "wear_h_rms"              "wear_h_p01"             
-# [33] "wear_h_p99"              "wear_w_mu"               "wear_w_sigma"            "wear_w_rms"             
-# [37] "wear_w_p01"              "wear_w_p99"              "corrugation_mu"          "corrugation_sigma"      
-# [41] "corrugation_rms"         "corrugation_p01"         "corrugation_p99"         "inclination_mu"         
-# [45] "inclination_sigma"       "inclination_rms"         "inclination_p01"         "inclination_p99"        
-# [49] "twist2m_mu"              "twist2m_sigma"           "twist2m_rms"             "twist2m_p01"            
-# [53] "twist2m_p99"             "twist3m_mu"              "twist3m_sigma"           "twist3m_rms"            
-# [57] "twist3m_p01"             "twist3m_p99"             "gauge_mu"                "gauge_sigma"            
-# [61] "gauge_rms"               "gauge_p01"               "gauge_p99"               "cant_mu"                
-# [65] "cant_sigma"              "cant_rms"                "cant_p01"                "cant_p99"               
-# [69] "align_horiz_d0_mu"       "align_horiz_d0_sigma"    "align_horiz_d0_rms"      "align_horiz_d0_p01"     
-# [73] "align_horiz_d0_p99"      "align_horiz_d1_mu"       "align_horiz_d1_sigma"    "align_horiz_d1_rms"     
-# [77] "align_horiz_d1_p01"      "align_horiz_d1_p99"      "align_vert_d0_mu"        "align_vert_d0_sigma"    
-# [81] "align_vert_d0_rms"       "align_vert_d0_p01"       "align_vert_d0_p99"       "align_vert_d1_mu"       
-# [85] "align_vert_d1_sigma"     "align_vert_d1_rms"       "align_vert_d1_p01"       "align_vert_d1_p99"      
-# [89] "passages_maintenance"    "stone_maintenance"       "removed_material"        "maintenance_source"     
-# [93] "defect_source"           "track_source"            "rail_left"               "visible"                
-# [97] "combined_defect"         "under_limit"             "BTR"                     "Track"                  
-# [101] "From"                    "To"                      "Defect_group"            "Profile"                
-# [105] "Fastening"               "State"                   "detection_method"        "cluster_method"         
-# [109] "crack_counts"           
-# 
-
-
 constant_cols = c("ID", "in_straight","in_transition_curve","in_curve","covariates_complete","rail_age", "R200", "R260", "R350HT", "rail_1m_weight","traffic_direction", 
                   "Curve", "Overheight", "MGT_min", "MGT_max", "EMGT_min", "EMGT_max", "Line_speed", "Turnout_indicator","rail_left","BTR", "Track", "From", "To", "Profile","Fastening","detection_method","crack_counts", "BTR_first2digits")
 measurement_cols = c("wear_h_mu", "wear_h_sigma", "wear_h_rms", "wear_h_p01","wear_h_p99", "wear_w_mu", "wear_w_sigma","wear_w_rms", "wear_w_p01", "wear_w_p99",
@@ -99,40 +64,22 @@ for (i in seq_along(IDs)) {
   interpolated_data[[i]] = foo
 }
 
-
-
 interpolated = bind_rows(interpolated_data)
-
-
-
-
-
-
-
 write.csv(interpolated_data, file = "crack_data_interpolated_list.csv", row.names = FALSE)
 
 
 
 
-
-as.data.frame(interpolated_data[[1]])
-
-
-
-
-
-
-foo1 = interp_data(data = d, ID = unique(d$ID)[2001],constant_cols = constant_cols, measurement_cols = measurement_cols[!grepl("d0",measurement_cols)], order = 1, cutoff_date = as.Date("2013-12-01"))
-View(foo1)
-
-
-cor_per_id <- d %>%
-  group_by(ID) %>%
-  summarise(cor_wear_incl = cor(wear_h_mu, inclination_mu, use = "pairwise.complete.obs"),
-            cor_crack_gauge = cor(crack_size, gauge_mu, use = "pairwise.complete.obs"),
-            .groups = "drop")
-
-ccf_result <- ccf(interp_data$wear_interp, interp_data$crack_size_interp, na.action = na.pass)
+# 
+# as.data.frame(interpolated_data[[1]])
+# foo1 = interp_data(data = d, ID = unique(d$ID)[2001],constant_cols = constant_cols, measurement_cols = measurement_cols[!grepl("d0",measurement_cols)], order = 1, cutoff_date = as.Date("2013-12-01"))
+# View(foo1)
+# cor_per_id <- d %>%
+#   group_by(ID) %>%
+#   summarise(cor_wear_incl = cor(wear_h_mu, inclination_mu, use = "pairwise.complete.obs"),
+#             cor_crack_gauge = cor(crack_size, gauge_mu, use = "pairwise.complete.obs"),
+#             .groups = "drop")
+# ccf_result <- ccf(interp_data$wear_interp, interp_data$crack_size_interp, na.action = na.pass)
 
 ### QUESTIONS ###
 # - Collinearity in measurement variables
