@@ -36,6 +36,7 @@ first_non_na <- function(x) {
 }
 
 
+
 interp_data <- function(data, ID, constant_cols, measurement_cols, order = 0,cutoff_date = NULL){
   data=data[data$ID == ID, ] #look at specific ID
   original_cols <- names(data) #for later reordering
@@ -67,6 +68,21 @@ for (i in seq_along(IDs)) {
 interpolated = bind_rows(interpolated_data)
 write.csv(interpolated_data, file = "crack_data_interpolated_list.csv", row.names = FALSE)
 
+
+library(parallel)
+
+IDs <- unique(d$ID)
+
+interpolated_data <- mclapply(IDs, function(ID) {
+  interp_data(
+    data = d,
+    ID = ID,
+    constant_cols = constant_cols,
+    measurement_cols = measurement_cols[!grepl("d0", measurement_cols)],
+    order = 1,
+    cutoff_date = as.Date("2011-12-01")
+  )
+}, mc.cores = detectCores() - 1)  # adjust cores as needed
 
 
 
