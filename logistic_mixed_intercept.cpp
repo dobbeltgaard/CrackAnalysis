@@ -9,7 +9,7 @@ Type log_sigmoid(Type x) {
   }
 }
 
-
+// Random intercept
 
 template<class Type>
 Type objective_function<Type>::operator() ()
@@ -30,9 +30,7 @@ Type objective_function<Type>::operator() ()
   for(int i = 0; i < n; i++){
     foo = eta(i);
     foo += u(ID(i));
-    
     nll += Y(i) * log_sigmoid(foo) + (1 - Y(i)) * log_sigmoid(-foo);
-    
     //nll += Y(i)*foo - log(1+exp(foo));
   }
   nll+=sum(dnorm(u, Type(0.0), sigma_u, true));

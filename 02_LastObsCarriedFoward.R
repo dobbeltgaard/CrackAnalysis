@@ -4,8 +4,9 @@ rm(list = ls())
 ### LOCF per defect level
 ### Objective: To analyse crack growth in terms of track behavior.
 ### Assumption: assuming last observation is valid until new measurement, creating regular temporal grid (1month resolution)
-
-d = read.csv("crack_data_v2.csv")
+library(data.table)
+d = fread('crack_data_v2.csv', header = T, sep = ',')
+d = as.data.frame(d)
 
 library(dplyr)
 library(tidyr)
@@ -239,11 +240,8 @@ table(lags_df_class1$max_lag_align)
 ##############################
 ### CRACK INITIATION MODEL ###
 ##############################
-d_initiation <- d[idx_class5 & d$ID > 50000, ] %>% arrange(ID, Date_month) %>% group_by(ID) %>% filter(!first(crack_size > 0)) %>% mutate(crack_initiation = crack_size > 0,post_crack = cumsum(crack_initiation) > 1) %>%filter(!post_crack) %>%mutate(crack_initiation = as.integer(crack_initiation)) %>% ungroup()
+d_initiation <- d[idx_class5, ] %>% arrange(ID, Date_month) %>% group_by(ID) %>% filter(!first(crack_size > 0)) %>% mutate(crack_initiation = crack_size > 0,post_crack = cumsum(crack_initiation) > 1) %>%filter(!post_crack) %>%mutate(crack_initiation = as.integer(crack_initiation)) %>% ungroup()
 d_initiation <- d_initiation %>% select(crack_initiation, State, everything()) %>% as.data.frame()
-
-summary(glm(crack_initiation ~ align_horiz_d1_mu + twist2m_sigma, data = d_initiation, family = "binomial")) #fixed logistic regression
-
 d_initiation$ID2 <- match(d_initiation$ID, unique(d_initiation$ID)) #relabel IDs
 
 
@@ -264,49 +262,55 @@ opt <- nlminb(obj$par, obj$fn, obj$gr)
 opt #model estimates
 sqrt(diag(solve(obj$he()))) #standard errors
 
+summary(glm(crack_initiation ~ align_horiz_d1_mu + twist2m_sigma, data = d_initiation, family = "binomial")) #fixed logistic regression from glm package
 
-nam = "logistic_mixed"
+
+
+nam = "logistic_mixed_intercept"
 compile(paste0(nam, ".cpp"))
 dyn.load(dynlib(nam))  
 
 X <- model.matrix(~ align_horiz_d1_mu + twist2m_sigma, data = d_initiation)  # add covariates here
 Y <- d_initiation$crack_initiation  # binary response
 id <- as.integer(factor(d_initiation$ID2)) - 1  # zero-based factor
+data <- list(Y = Y, X = X, ID = id)
+parameters <- list(beta = runif(NCOL(X),-1,1), u = rep(0.1, length(unique(id))),log_sigma_u = -1)
+
+obj <- MakeADFun(data, parameters, random = "u", DLL = nam,hessian = T) #specifying random = "u" implies estimating "u", using laplace's approximation of the full marginal likelihood
+opt <- nlminb(obj$par, obj$fn, obj$gr)
+opt #model estimates
+sqrt(diag(solve(obj$he()))) #standard errors
+
+
+
+
+nam = "logistic_mixed_intercept_slope"
+compile(paste0(nam, ".cpp"))
+dyn.load(dynlib(nam))  
+
+X <- model.matrix(~ twist2m_sigma, data = d_initiation)  # add covariates here
+Y <- d_initiation$crack_initiation  # binary response
+id <- as.integer(factor(d_initiation$ID2)) - 1  # zero-based factor
 
 data <- list(Y = Y, X = X, ID = id)
-parameters <- list(beta = runif(NCOL(X),-1,1), u = rep(0.1, length(unique(id))),log_sigma_u = -2)
+parameters <- list(beta = runif(NCOL(X),-1,1), u = matrix(0.1, nrow = length(unique(id)), ncol = NCOL(X)),log_sigma_u = rep(-2,NCOL(X)))
 
 obj <- MakeADFun(data, parameters, random = "u", DLL = nam,hessian = T)
 opt <- nlminb(obj$par, obj$fn, obj$gr)
 opt #model estimates
 sqrt(diag(solve(obj$he()))) #standard errors
 
-#Trouble shoot: 
-# - find glmm examle from TMB package and try on this windows: https://github.com/admb-project/tmb-examples/blob/master/orange-trees/ora.cpp
-# - try this code on the HPC cluster
 
-library(glmmTMB)
-glmmTMB(crack_initiation ~ 1 + (1 | ID2), data = d_initiation, family = binomial)
+library("glmmTMB")
+glmmTMB(crack_initiation ~ align_horiz_d1_mu + twist2m_sigma + (1 | ID2), data = d_initiation, family = binomial) #mixed logistic regression from glm package
 
 
 
+# Had to install a specific version of Matrix to get TMB and glmmTMB to work on Windows machine
+# library(remotes)
+# install_version("Matrix", "1.6-2")
 
 
-
-
-
-#create target for logistic regression.(need to filter out IDs that dont have zero crack at first obs***)
-
-d <- d %>% group_by(ID) %>% mutate(crack_initiated = crack_size > 0,crack_start = crack_initiated & !lag(crack_initiated, default = FALSE))
-
-
-
-p1 = d %>% ggplot(aes(x = Date_month, y = crack_size, group = ID)) + geom_line(alpha = 0.2)
-
-
-
-fit = lm(crack_size ~ wear_h_mu + wear_w_mu + corrugation_mu + inclination_sigma + twist2m_mu + twist3m_sigma + gauge_mu + cant_mu, data = d)
-summary(fit)
 
 
 
@@ -320,6 +324,199 @@ summary(fit)
 ## - assessment of predictive cabability (locf and linear interp. data comparison as well)
 
 # - Do above for different crack types (class 5, 4, and 1).
+
+
+###############################
+### CRACK PROPAGATION MODEL ###
+###############################
+
+rm(list=ls())
+
+
+set.seed(123)
+
+# --- Parameters ---
+n_ids <- 500
+obs_per_id <- 10
+N <- n_ids * obs_per_id
+
+log_sigma_Y <- -1
+u_mu <- 0.5
+log_sigma_u <- 0.1
+theta <- c(0.9,6,1.1)
+
+# --- Latent values ---
+log_u <- rnorm(n_ids, mean = 0, sd = exp(log_sigma_u))
+u <- log_u#exp(log_u)
+ID <- rep(1:n_ids, each = obs_per_id)
+
+# --- Observation times ---
+#dTime <- runif(N, 0.2, 2)
+#dTime[!duplicated(ID)] <- 0
+dTime <- rep(NA, N)
+for (id in 1:n_ids) {
+  dTime[ID == id] <- c(0, runif(obs_per_id - 1, 0.1, 1))  # 0, then durations
+}
+
+
+# --- Simulate process ---
+dt <- 0.001
+X <- numeric(N)
+Y <- numeric(N)
+
+
+sigma_Y <- exp(log_sigma_Y)
+
+
+for (id in 1:n_ids) {
+  idx <- which(ID == id)
+  Xi <- u_mu
+  #Xi = u[id]
+  for (j in seq_along(idx)) {
+    i <- idx[j]
+    n_steps <- floor(dTime[i] / dt)
+    if(n_steps > 1) {
+      for (k in 1:n_steps) {
+        Xi <- Xi + dt * theta[1] * (-Xi + theta[2]) + u[] 
+        #Xi <- Xi + dt * theta[1] * (-Xi + theta[2])^theta[3]
+        #Xi <- Xi + dt * theta[1] * Xi^theta[2]
+        if (Xi > 140) { Xi <- 140; break }
+        if (Xi < 0)   { Xi <- 0.0001; break }
+      }
+    }
+    X[i] <- Xi
+    Y[i] <- rnorm(1, X[i], sigma_Y)
+  }
+}
+
+# --- Prepare data list ---
+sim_data <- list(
+  Y = Y,
+  ID = as.integer(ID - 1),
+  dTime = dTime
+)
+
+# --- Initial values ---
+init <- list(
+  log_sigma_Y = 0.1,
+  #u = rlog_u,
+  log_u_mu = .1,
+  #log_u_sigma = .1,
+  log_theta = c(.1,.6,.1)
+)
+
+####
+set.seed(123)
+
+# --- Parameters ---
+n_ids <- 500
+obs_per_id <- 10
+N <- n_ids * obs_per_id
+
+log_sigma_Y <- -1
+sigma_Y <- exp(log_sigma_Y)
+log_shape <- log(1)
+log_scale <- log(0.7)
+shape <- exp(log_shape)
+scale <- exp(log_scale)
+theta <- c(0.9, 6, 1.1)  # theta[0] * (-X + theta[1])^theta[2]
+
+# --- Latent Gaussian u, transformed via qgamma(pnorm(.)) ---
+u <- rnorm(n_ids, 0, 1)
+v <- pnorm(u)
+w <- qgamma(v, shape = shape, scale = scale)  # Gamma-distributed initial values
+
+# --- ID and dTime ---
+ID <- rep(1:n_ids, each = obs_per_id)
+dTime <- rep(NA, N)
+for (id in 1:n_ids) {
+  dTime[ID == id] <- c(0, runif(obs_per_id - 1, 0.1, 1))
+}
+
+# --- Simulate process ---
+dt <- 0.001
+X <- numeric(N)
+Y <- numeric(N)
+
+for (id in 1:n_ids) {
+  idx <- which(ID == id)
+  Xi <- w[id]
+  for (j in seq_along(idx)) {
+    i <- idx[j]
+    if (dTime[i] > 0) {
+      n_steps <- floor(dTime[i] / dt)
+      for (k in 1:n_steps) {
+        Xi <- Xi + dt * theta[1] * (-Xi + theta[2])^theta[3]
+        if (Xi > 140) { Xi <- 140; break }
+        if (Xi < 0)   { Xi <- 0.0001; break }
+      }
+    }
+    X[i] <- Xi
+    Y[i] <- rnorm(1, Xi, sigma_Y)
+  }
+}
+
+# --- Data for TMB ---
+sim_data <- list(
+  Y = Y,
+  ID = as.integer(ID - 1),
+  dTime = dTime
+)
+
+# --- Starting values ---
+init <- list(
+  log_sigma_Y = 0,
+  u = rep(0, n_ids),  # centered latent effects (to be mapped to gamma via qgamma(pnorm(.)))
+  log_theta = log(c(0.5, 5, 1.0)),
+  shape_log = log(0.7),
+  scale_log = log(1)
+)
+
+
+
+library(TMB)
+nam = "ode_random_effect_IC_v2"
+compile(paste0(nam, ".cpp"))
+dyn.load(dynlib(nam))
+
+
+obj <- MakeADFun(sim_data, init, random = "u", DLL = nam)
+#obj <- MakeADFun(sim_data, init, DLL = nam)
+
+opt <- nlminb(obj$par, obj$fn, obj$gr)
+opt #model estimates
+exp(opt$par)
+sqrt(diag(solve(obj$he()))) #standard errors
+
+
+
+
+
+
+
+# 
+# 
+# for(i in 1:N){
+#   id <- ID[i]
+#   Xi <- u[id]
+#   n_steps <- floor(dTime[i] / dt)
+#   if(n_steps > 1) {
+#     for(k in 1:n_steps){
+#       Xi <- Xi + dt * theta[1] * Xi^theta[2]
+#       #Xi <- Xi + dt * theta[1] * (theta[2] - Xi)#^theta[3]
+#       if(Xi > 140) { Xi <- 140; break }
+#       if(Xi < 0) { Xi <- 0.0001; break }
+#     } 
+#   }
+#   X[i] <- Xi
+#   Y[i] <- rnorm(1, X[i], sigma_Y)
+# }
+
+
+
+
+
+
 
 
 
