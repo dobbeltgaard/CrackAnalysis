@@ -12,7 +12,9 @@ softplus_inv <- function(y) {
   log(exp(y) - 1)
 }
 
-
+rBM = function(t){
+  cumsum(rnorm(n = length(t), sd = sqrt(diff(c(0,t)))))
+}
 
 maintenance = function(X, alpha, M, min_X, max_X){
   res = X + alpha*M
@@ -38,12 +40,16 @@ simulate_process_w_maintenance <- function(
     seed = 123, 
     n_mnt = 500, 
     maint_slope = 0.5, 
-    type = "ode"
+    type = "ode",
+    diffusion_type = c("constant", "sqrt", "linear", "logistic"),
+    sde_sigma = 0.5
+    
 ) {
   set.seed(seed)
   obs_dist <- match.arg(obs_dist)
   dist <- match.arg(dist)
   drift_type <- match.arg(drift_type)
+  diffusion_type <- match.arg(diffusion_type)
   init_mode <- match.arg(init_mode)
   N <- n_ids * obs_per_id
   
@@ -59,14 +65,12 @@ simulate_process_w_maintenance <- function(
   )
   if (!is.null(fixed)) { if (length(fixed) == 1L) {w <- rep(fixed, n_ids);} else if (length(fixed) == n_ids) { w <- fixed; } }
   
-  if(type == "ode"){ }
-  else if (type == "sde"){}
   
   # -- ID and observation times --
   ID <- rep(1:n_ids, each = obs_per_id)
   dTime <- rep(NA_real_, N)
   for (id in 1:n_ids) {
-    dTime[ID == id] <- c(0, runif(obs_per_id - 1, 0.1, 1))
+    dTime[ID == id] <- c(0, runif(obs_per_id - 1, 0.1, 2))
   }
   
   # -- Map drift_type to integer code --
@@ -89,6 +93,20 @@ simulate_process_w_maintenance <- function(
     power_up   = function(x, th) th[1] * pmax(x, 0)^th[2]*(1-x/max_X)
   )
   
+  # -- Diffusion selection 
+  diffusion <- switch(
+    diffusion_type,
+    constant = function(x) sde_sigma,
+    sqrt     = function(x) sde_sigma * sqrt(pmax(x, 0)),
+    linear   = function(x) sde_sigma * pmax(x, 0),
+    logistic = function(x) sde_sigma * x * (1 - x / max_X)
+  )
+  
+  step_process <- function(Xi, dt) {
+    if(type == "sde") {Xi + dt * drift(Xi, theta) + sqrt(dt) * diffusion(Xi) * rnorm(1)} 
+    else if(type == "ode") {Xi + dt * drift(Xi, theta)}
+  }
+  
   
   # -- Simulate process --
   X <- numeric(N)
@@ -99,18 +117,22 @@ simulate_process_w_maintenance <- function(
   idx_mnt = sample(1:N, n_mnt, TRUE)
   M[idx_mnt] = 1
   Y[idx_mnt] = NA_real_
+  start_value = runif(n_ids)
   
   for (id in 1:n_ids) {
+    set.seed(seed + id)
     idx <- which(ID == id)
     if (init_mode == "X0") { Xi <- w[id]}
     if (init_mode =="t_tilde") {
       Xi <- min_X
       warmup_steps <- floor(w[id] / dt)
       for (k in 1:warmup_steps) {
-        Xi <- Xi + dt * drift(Xi, theta)
-        if (Xi > max_X) { Xi <- max_X; break }
-        if (Xi < 0)     { Xi <- min_X; break }
+        Xi <- step_process(Xi, dt)
+        #Xi <- Xi + dt * drift(Xi, theta)
+        # if (Xi > max_X) { Xi <- max_X; break }
+        # if (Xi < 0)     { Xi <- min_X; break }
       }
+      Xi <- min(max(Xi, min_X), max_X)
     }
     
     for (j in seq_along(idx)) {
@@ -119,16 +141,19 @@ simulate_process_w_maintenance <- function(
       if (dTime[i] > 0) {
         n_steps <- floor(dTime[i] / dt)
         for (k in 1:n_steps) {
-          Xi <- Xi + dt * drift(Xi, theta)
-          if (Xi > max_X) { Xi <- max_X; break }
-          if (Xi < 0)     { Xi <- min_X; break }
+          Xi <- step_process(Xi, dt)
+          #Xi <- Xi + dt * drift(Xi, theta)
+          #if (Xi > max_X) { Xi <- max_X; break }
+          #if (Xi < 0)     { Xi <- min_X; break }
         }
+        Xi <- min(max(Xi, min_X), max_X)
       }
       
       Xi = maintenance(Xi, maint_slope, M[i], min_X, max_X)
       X[i] <- Xi
       
       if(is.na(Y[i])) next; 
+      
       
       if (obs_dist == "normal") {
         Y[i] <- rnorm(1, Xi, obs_noise)
@@ -139,6 +164,8 @@ simulate_process_w_maintenance <- function(
         scale_Y <- Xi * obs_noise^2             # So that mean = Xi
         Y[i] <- rgamma(1, shape = shape_Y, scale = scale_Y)
       }
+      
+      
     }
   }
   
@@ -159,7 +186,7 @@ simulate_process_w_maintenance <- function(
     X = X,
     Y = Y,
     M = M,
-    latent = list(u = u, v = v, w = w),
+    latent = list(u = u, v = v, w = w, start_value = start_value),
     params = list(theta = theta, drift_type = drift_type, init_mode = init_mode,maint_slope = maint_slope)
   ))
 }
